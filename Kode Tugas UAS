@@ -1,3 +1,14 @@
+library(readr)
+library(readxl)
+library(dplyr)
+library(nortest)
+library(ggplot2)
+library(gplots)
+library(AICcmodavg)
+library(nlme)
+library(geepack)
+library(broom)
+
 #1.Menganalisis perbedaan dari Functional Ability pada pekan pertama (Bart1) berdasarkan grup intervensi (Group) dengan visualisasi boxplot. Membuat grafik boxplot dan menginterpretasi dan menyimpulkan hasilnya.
 #boxplot
 boxplot(stroke$Bart1~stroke$Group,xlab="Grup",ylab="Bart 1",col=c("red","blue","yellow"),
@@ -23,24 +34,60 @@ qqline(stroke$Bart_diff)
 shapiro.test(stroke$Bart_diff)
 
 #5.Mencek kesamaan variance dari perubahan Functional Ability (Bart_diff) antara grup intervensi (Group) dengan uji statistic yang sesuai dan menginterpretasikannya
-varBart <- stroke$Bart_diff
-var(varBart)
+bartlett.test(stroke$Bart_diff, stroke$Group)
 
 #6.Memplot mean dan 95% Confidence Interval dari nilai perubahan Functional Ability (Bart_diff) berdasarkan grup intervensi (Group) dalam 1 grafik.
-varBart <- stroke$Bart_diff
-mean(varBart)
+plotmeans(Bart_diff ~ Group, data = stroke, frame = FALSE,
+          mean.labels = TRUE, connect = FALSE)
 
-library(dplyr)
-library(ggplot2)
+#7. Melakukan uji anova untuk membandingkan rata-rata(mean) nilai perubahan Functional Ability (Bart_diff) antara 3 grup intervensi (Group) dan menginterpretasikannya. 
+summary(aov(Bart_diff~Group, data = stroke))
 
-data <- stroke %>% select(Bart_diff, Group)
-tt <- t.test(data$Bart_diff,conf.level=0.95)
-tt$conf.int[1]
-tt$conf.int[2]
+#8. Melakukan analisis model linear regresi dengan Functional Ability (Bartlet) sebagai outcome(y) dan explanatory variables meliputi: waktu(time/week), grup intervensi (group), dan interaksi waktu dan grup intervensi. 
+model1 <- lm(ability ~ as.numeric(time) + Group + as.numeric(time)*Group, data = stroke_long)
 
-data2 <- data%>% 
-  dplyr::group_by(Group)%>%
-  dplyr::summarise(
-    mean = mean(Bart_diff),
-    lci = t.test(Bart_diff,conf.level = 0.95)$conf.int[1],
-    uci = t.test(Bart_diff,conf.level = 0.95)$conf.int[2])
+
+#9.Melakukan ulang Langkah no 8 tanpa variable interaksi di dalam model.
+model2 <- lm(ability ~ as.numeric(time) + Group, data = stroke_long)
+
+#10.Menghitung AIC model no 8 dan 9, serta menginterpretasikan perbandingan nilai AIC nya.
+glance(model1)
+glance(model2)
+
+
+#12.Melakukan analisis mixed model (random intercept) menggunakan package nlme. Functional Ability (Bartlet) sebagai outcome(y) dan explanatory variables meliputi: waktu(time/week), grup intervensi (group), dan Random intercept.
+library(nlme)
+mixmodel <- lme(ability~as.numeric(time) + as.factor(Group), data = stroke_long,
+                random=~1|Subject)
+
+#13.Melakukan ulang analisis  dengan Functional Ability (Bartlet) sebagai outcome(y) dan explanatory variables meliputi: waktu(time/week), grup intervensi (group) dengan General Estimating Equation (GEE) dengan correlation structure:
+#1.Exchangeable
+gee_exch <- geeglm(ability~as.factor(Group)+as.numeric(time)+as.factor(Group)*as.numeric(time),family=gaussian,
+                   data=stroke_long,id=as.factor(Subject),wave=as.numeric(time),corst="exchangeable")
+exch<-corCompSymm(form = ~ 1 | Subject)
+gls.exch<-gls(ability~as.factor(Group)+as.numeric(time)+
+                as.factor(Group)*as.numeric(time), data=stroke_long,
+              correlation=exch)
+summary(gls.exch)
+
+#2.Auto regressive
+gee_ar1 <- geeglm(ability~as.factor(Group)+as.numeric(time)+as.factor(Group)*as.numeric(time),family=gaussian,
+                  data=stroke_long,id=as.factor(Subject),wave=as.numeric(time),corst="ar1")
+ar1<-corAR1(form = ~ 1 | Subject)
+gls.ar1<-gls(ability~as.factor(Group)+as.numeric(time)+
+               as.factor(Group)*as.numeric(time), data=stroke_long,
+             correlation=ar1)
+summary(gls.ar1)
+
+#3.Unstructure
+gee_un <- geeglm(ability~as.factor(Group)+as.numeric(time)+as.factor(Group)*as.numeric(time),family=gaussian,
+                 data=stroke_long,id=as.factor(Subject),wave=as.numeric(time),corst="unstructured")
+un<-corSymm(form = ~ 1 | Subject)
+gls.un<-gls(ability~as.factor(Group)+as.numeric(time)+
+              as.factor(Group)*as.numeric(time), data=stroke_long,
+            correlation=un)
+summary(gls.un)
+
+
+#14.Mengingat GEE tidak dapat mengeluarkan AIC, dengan menggunakan statement gls, menghitung AIC dari model GLS dengan ketiga struktur korelasi di atas (Exchangeable, Auto regressive, dan Unstructure)
+aic = AIC(gls.exch,gls.ar1,gls.un)
